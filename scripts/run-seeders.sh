@@ -107,9 +107,40 @@ run_seed() {
 }
 
 ok=0 fail=0 skip=0 timedout=0
+failed_names=""
+timedout_names=""
+
+# Excluded from the automated loop — each has a reason that makes routine
+# unattended execution wrong, not just "currently failing":
+#   seed-consumer-prices.mjs   — the script's OWN --force guard exists because
+#     it overwrites Redis keys with short TTLs (10-60min) that stomp the
+#     authoritative publish.ts 26h TTLs. Manual-recovery-only by design; do
+#     not pass --force here.
+#   seed-digest-notifications.mjs — hard-requires the `resend` npm package,
+#     which isn't installed (email-digest feature, RESEND_API_KEY unset —
+#     not in use on this deployment). Re-include once resend is installed
+#     and configured.
+#   seed-comtrade-bilateral-hs4.mjs — routinely runs to the full 1800s
+#     SEED_TIMEOUT against UN Comtrade's slow bilateral-trade API, starving
+#     every seeder after it in the sequential loop. Given its own schedule
+#     instead — see the cron entry in SELF_HOSTING.md / crontab, not run here.
+EXCLUDED_SEEDS="seed-consumer-prices.mjs seed-digest-notifications.mjs seed-comtrade-bilateral-hs4.mjs"
+
+is_excluded() {
+  name="$(basename "$1")"
+  for x in $EXCLUDED_SEEDS; do
+    [ "$name" = "$x" ] && return 0
+  done
+  return 1
+}
 
 for f in "$SCRIPT_DIR"/seed-*.mjs; do
   name="$(basename "$f")"
+  if is_excluded "$f"; then
+    printf "→ %s ... EXCLUDED (see comment above the exclusion list)\n" "$name"
+    skip=$((skip + 1))
+    continue
+  fi
   printf "→ %s ... " "$name"
   output=$(run_seed "$f")
   rc=$?
@@ -121,6 +152,7 @@ for f in "$SCRIPT_DIR"/seed-*.mjs; do
   if caps_seed "$f" && { [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; }; then
     printf "TIMEOUT (killed after %ss)\n" "$SEED_TIMEOUT"
     timedout=$((timedout + 1))
+    timedout_names="$timedout_names,\"$name\""
   elif echo "$last" | grep -qi "skip\|not set\|missing.*key\|not found"; then
     printf "SKIP (%s)\n" "$last"
     skip=$((skip + 1))
@@ -130,8 +162,41 @@ for f in "$SCRIPT_DIR"/seed-*.mjs; do
   else
     printf "FAIL (%s)\n" "$last"
     fail=$((fail + 1))
+    failed_names="$failed_names,\"$name\""
   fi
 done
 
 echo ""
 echo "Done: $ok ok, $skip skipped, $fail failed, $timedout timed out"
+
+# Record a run-level summary for the Director-facing health indicator —
+# a NEW, separate key, deliberately not touching the existing per-domain
+# seed-meta:*/api/seed-health.js freshness system (that already tracks each
+# data domain's own staleness independently; this is just "did the last
+# scheduled run itself come back clean or degraded", a different question).
+if [ -n "${UPSTASH_REDIS_REST_URL:-}" ] && [ -n "${UPSTASH_REDIS_REST_TOKEN:-}" ] && command -v jq >/dev/null 2>&1; then
+  status="healthy"
+  [ "$fail" -gt 0 ] || [ "$timedout" -gt 0 ] && status="partial_degradation"
+  # Build the summary object, then the value AND the outer pipeline command
+  # array via jq — the REST proxy speaks the Upstash pipeline protocol
+  # (POST /pipeline, body = [["SET", key, value], ...]), not a bare
+  # POST /set/<key> with the value as the raw body (that 400s with "wrong
+  # number of arguments" — confirmed the hard way).
+  summary=$(jq -nc --arg ts "$(date +%s)" --arg status "$status" \
+    --arg ok "$ok" --arg skip "$skip" --arg fail "$fail" --arg timedout "$timedout" \
+    --arg failedRaw "${failed_names#,}" --arg timedoutRaw "${timedout_names#,}" '
+    ($failedRaw | if . == "" then [] else ("[" + . + "]" | fromjson) end) as $failedArr |
+    ($timedoutRaw | if . == "" then [] else ("[" + . + "]" | fromjson) end) as $timedoutArr |
+    {
+      timestamp: ($ts | tonumber), status: $status,
+      ok: ($ok | tonumber), skipped: ($skip | tonumber),
+      failed: ($fail | tonumber), timedOut: ($timedout | tonumber),
+      failedSeeds: $failedArr, timedOutSeeds: $timedoutArr,
+      excludedSeeds: ["seed-consumer-prices.mjs","seed-digest-notifications.mjs","seed-comtrade-bilateral-hs4.mjs"]
+    }')
+  pipeline=$(jq -nc --arg key "seed-meta:seeder-run-summary:v1" --argjson val "$summary" '[["SET", $key, ($val | tojson)]]')
+  curl -s -X POST "$UPSTASH_REDIS_REST_URL/pipeline" \
+    -H "Authorization: Bearer $UPSTASH_REDIS_REST_TOKEN" \
+    -H "Content-Type: application/json" \
+    --data-raw "$pipeline" > /dev/null 2>&1 || echo "WARN: failed to write run summary to Redis" >&2
+fi
