@@ -19,7 +19,7 @@ services:
     image: worldmonitor:latest
     container_name: worldmonitor
     ports:
-      - "${WM_PORT:-3000}:8080"
+      - "127.0.0.1:${WM_PORT:-3000}:8080"
     environment:
       UPSTASH_REDIS_REST_URL: "http://redis-rest:80"
       UPSTASH_REDIS_REST_TOKEN: "${REDIS_TOKEN:?REDIS_TOKEN required — generate with: openssl rand -hex 32}"
@@ -69,6 +69,7 @@ services:
     image: worldmonitor-ais-relay:latest
     container_name: worldmonitor-ais-relay
     environment:
+      RELAY_SHARED_SECRET: "${RELAY_SHARED_SECRET:?RELAY_SHARED_SECRET required — generate with: openssl rand -hex 32}"
       AISSTREAM_API_KEY: "${AISSTREAM_API_KEY:-}"
       FINNHUB_API_KEY: "${FINNHUB_API_KEY:-}"
       MARKET_YAHOO_REFRESH_INTERVAL_MS: "${MARKET_YAHOO_REFRESH_INTERVAL_MS:-900000}"
