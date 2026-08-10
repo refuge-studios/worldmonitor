@@ -4242,7 +4242,15 @@ export class MapComponent {
     const centerY = height / (2 * zoom) - this.state.pan.y;
     const coords = projection.invert([centerX, centerY]);
     if (!coords) return null;
-    return { lon: coords[0], lat: coords[1] };
+    const [lon, lat] = coords;
+    // A truthy coords array can still hold NaN (e.g. the container was
+    // measured at 0x0 during a view transition, or the projection's
+    // invert() hit a domain edge) — that NaN was previously reaching
+    // urlState's lat.toFixed(4)/lon.toFixed(4) and landing in the URL as
+    // the literal string "NaN". Guard here, matching this function's own
+    // existing null-on-failure convention, rather than downstream.
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    return { lon, lat };
   }
 
   public getTimeRange(): TimeRange {

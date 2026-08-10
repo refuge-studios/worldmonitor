@@ -21,6 +21,7 @@ services:
     ports:
       - "127.0.0.1:${WM_PORT:-3000}:8080"
     environment:
+      WORLDMONITOR_SEED_REFRESH_KEY: "${WORLDMONITOR_SEED_REFRESH_KEY:-}"
       UPSTASH_REDIS_REST_URL: "http://redis-rest:80"
       UPSTASH_REDIS_REST_TOKEN: "${REDIS_TOKEN:?REDIS_TOKEN required — generate with: openssl rand -hex 32}"
       LOCAL_API_PORT: "46123"
@@ -45,6 +46,7 @@ services:
       CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:-}"
       AVIATIONSTACK_API: "${AVIATIONSTACK_API:-}"
       TRAVELPAYOUTS_API_TOKEN: "${TRAVELPAYOUTS_API_TOKEN:-}"
+      WINDY_API_KEY: "${WINDY_API_KEY:-}"
     # Docker secrets (recommended for API keys — keeps them out of docker inspect).
     # Create secrets/ dir with one file per key, then uncomment below.
     # See SELF_HOSTING.md or docker-compose.override.yml for details.
