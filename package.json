@@ -159,7 +159,7 @@
     "exceljs": "^4.4.0",
     "happy-dom": "^20.11.1",
     "js-yaml": "^4.3.1",
-    "markdownlint-cli2": "^0.21.0",
+    "markdownlint-cli2": "^0.23.3",
     "tsx": "^4.21.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
